@@ -1,0 +1,51 @@
+# DU con radio virtual ZMQ (en vez de USRP real) para el laboratorio.
+# cell_cfg / pdcch / prach / mcs replican gnb_rf_b210_fdd_srsUE.yml del propio
+# repo de OCUDU, que el propio archivo indica que esta ajustado para ser
+# compatible con las capacidades de srsUE.
+
+f1ap:
+  addrs: 10.0.0.22       # CU-CP
+  bind_addrs: 10.0.0.24  # esta DU
+
+f1u:
+  socket:
+    - bind_addr: 172.20.0.3
+
+ru_sdr:
+  device_driver: zmq
+  # tx_port: esta DU escucha aqui para ENVIAR muestras (DL) al UE
+  # rx_port: esta DU se conecta aqui para RECIBIR muestras (UL) del UE
+  device_args: tx_port=tcp://10.0.0.24:2000,rx_port=tcp://10.0.0.30:2001,base_srate=23.04e6
+  srate: 23.04
+  # tx_gain / rx_gain: NO validos con ZMQ (el validador exige <= 0.0 dB,
+  # solo tienen sentido con una radio real tipo USRP). Se omiten.
+
+cell_cfg:
+  pci: 1
+  dl_arfcn: 368500
+  band: 3
+  channel_bandwidth_MHz: 20
+  common_scs: 15
+  plmn: "99970"
+  tac: 1
+  pdcch:
+    dedicated:
+      ss2_type: common
+      dci_format_0_1_and_1_1: false
+    common:
+      ss0_index: 0
+      coreset0_index: 12
+  prach:
+    prach_config_index: 1
+  pdsch:
+    mcs_table: qam64
+  pusch:
+    mcs_table: qam64
+
+log:
+  filename: /tmp/du.log
+  all_level: info
+
+pcap:
+  mac_enable: enable
+  mac_filename: /tmp/du_mac.pcap

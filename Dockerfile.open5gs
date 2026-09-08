@@ -1,0 +1,28 @@
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Herramientas de red + Open5GS desde el PPA oficial
+RUN apt-get update && apt-get install -y \
+        software-properties-common \
+        curl \
+        iproute2 \
+        iptables \
+        net-tools \
+        iputils-ping \
+        libsctp-dev \
+    && add-apt-repository ppa:open5gs/latest \
+    && apt-get update \
+    && apt-get install -y open5gs \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Carpeta de logs (se monta como volumen desde el host en docker-compose.yaml)
+RUN mkdir -p /var/log/open5gs
+
+# NGAP (SCTP), GTP-U (N3/N9), PFCP (N4), SBI (HTTP/2)
+EXPOSE 38412/sctp 2152/udp 8805/udp 7777/tcp
+
+# No lanzamos nada por defecto: cada NF se invoca desde docker-compose.yaml
+# con su propio "command", reutilizando esta misma imagen.
+CMD ["/bin/bash"]

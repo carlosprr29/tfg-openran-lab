@@ -1,0 +1,34 @@
+logger:
+  file:
+    path: /var/log/open5gs/upf.log
+
+global:
+  max:
+    ue: 1024
+
+upf:
+  pfcp:
+    server:
+      - address: 10.0.0.19
+  gtpu:
+    server:
+      - address: 10.0.0.19
+  session:
+    - subnet: 10.45.0.0/16
+      dnn: internet
+      gateway: 10.45.0.1
+  metrics:
+    server:
+      - address: 10.0.0.19
+        port: 9090
+
+# NOTA: open5gs-upfd crea automaticamente la interfaz tun "ogstun" al arrancar
+# (necesita la capacidad NET_ADMIN y acceso a /dev/net/tun, ya configurados
+# en el servicio open5gs-upf del docker-compose.yaml).
+#
+# De momento NO añadimos reglas de NAT/MASQUERADE: el UE obtendra una IP en
+# 10.45.0.0/16 pero sin salida real a internet, tal y como decidiste. Si mas
+# adelante quieres salida real, bastaria con anadir en el entrypoint del
+# contenedor upf:
+#   iptables -t nat -A POSTROUTING -s 10.45.0.0/16 ! -o ogstun -j MASQUERADE
+

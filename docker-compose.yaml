@@ -1,0 +1,370 @@
+name: tfg-openran-lab
+
+# ==========================================
+# Rango de IPs de referencia (red 10.0.0.0/24)
+# ------------------------------------------
+# 10.0.0.10        mongodb
+# 10.0.0.11 - .20  Core 5G (Open5GS, un contenedor por NF)
+# 10.0.0.21        Open5GS WebUI
+# 10.0.0.22        OCUDU CU-CP (control)
+# 10.0.0.23        OCUDU CU-UP (datos)
+# 10.0.0.24        OCUDU DU
+# 10.0.0.30        UE simulado                     -> pendiente de revisar
+# 10.0.0.40        Near-RT RIC                     -> pendiente de revisar
+# 10.0.0.50        xApp / IA                       -> pendiente de revisar
+# ==========================================
+
+services:
+  # ==========================================
+  # BLOQUE 1: CORE 5G (Open5GS) - un contenedor por Network Function
+  # ==========================================
+  mongodb:
+    image: mongo:7.0
+    container_name: core-mongodb
+    networks:
+      oran_5g_net:
+        ipv4_address: 10.0.0.10
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+
+  open5gs-nrf:
+    image: local/open5gs:latest
+    container_name: core-nrf
+    command: open5gs-nrfd -c /etc/open5gs/nrf.yaml
+    volumes:
+      - ./config/open5gs/nrf.yaml:/etc/open5gs/nrf.yaml:ro
+      - ./logs/open5gs:/var/log/open5gs
+    networks:
+      oran_5g_net:
+        ipv4_address: 10.0.0.11
+    healthcheck:
+      test: ["CMD", "sh", "-c", "ss -tln | grep -q :7777"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  open5gs-ausf:
+    image: local/open5gs:latest
+    container_name: core-ausf
+    command: open5gs-ausfd -c /etc/open5gs/ausf.yaml
+    volumes:
+      - ./config/open5gs/ausf.yaml:/etc/open5gs/ausf.yaml:ro
+      - ./logs/open5gs:/var/log/open5gs
+    depends_on:
+      open5gs-nrf:
+        condition: service_healthy
+    networks:
+      oran_5g_net:
+        ipv4_address: 10.0.0.12
+
+  open5gs-udm:
+    image: local/open5gs:latest
+    container_name: core-udm
+    command: open5gs-udmd -c /etc/open5gs/udm.yaml
+    volumes:
+      - ./config/open5gs/udm.yaml:/etc/open5gs/udm.yaml:ro
+      - ./logs/open5gs:/var/log/open5gs
+    depends_on:
+      open5gs-nrf:
+        condition: service_healthy
+    networks:
+      oran_5g_net:
+        ipv4_address: 10.0.0.13
+
+  open5gs-udr:
+    image: local/open5gs:latest
+    container_name: core-udr
+    command: open5gs-udrd -c /etc/open5gs/udr.yaml
+    volumes:
+      - ./config/open5gs/udr.yaml:/etc/open5gs/udr.yaml:ro
+      - ./logs/open5gs:/var/log/open5gs
+    depends_on:
+      open5gs-nrf:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    networks:
+      oran_5g_net:
+        ipv4_address: 10.0.0.14
+
+  open5gs-pcf:
+    image: local/open5gs:latest
+    container_name: core-pcf
+    command: open5gs-pcfd -c /etc/open5gs/pcf.yaml
+    volumes:
+      - ./config/open5gs/pcf.yaml:/etc/open5gs/pcf.yaml:ro
+      - ./logs/open5gs:/var/log/open5gs
+    depends_on:
+      open5gs-nrf:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    networks:
+      oran_5g_net:
+        ipv4_address: 10.0.0.15
+
+  open5gs-bsf:
+    image: local/open5gs:latest
+    container_name: core-bsf
+    command: open5gs-bsfd -c /etc/open5gs/bsf.yaml
+    volumes:
+      - ./config/open5gs/bsf.yaml:/etc/open5gs/bsf.yaml:ro
+      - ./logs/open5gs:/var/log/open5gs
+    depends_on:
+      open5gs-nrf:
+        condition: service_healthy
+    networks:
+      oran_5g_net:
+        ipv4_address: 10.0.0.16
+
+  open5gs-nssf:
+    image: local/open5gs:latest
+    container_name: core-nssf
+    command: open5gs-nssfd -c /etc/open5gs/nssf.yaml
+    volumes:
+      - ./config/open5gs/nssf.yaml:/etc/open5gs/nssf.yaml:ro
+      - ./logs/open5gs:/var/log/open5gs
+    depends_on:
+      open5gs-nrf:
+        condition: service_healthy
+    networks:
+      oran_5g_net:
+        ipv4_address: 10.0.0.17
+
+  open5gs-amf:
+    image: local/open5gs:latest
+    container_name: core-amf
+    command: open5gs-amfd -c /etc/open5gs/amf.yaml
+    volumes:
+      - ./config/open5gs/amf.yaml:/etc/open5gs/amf.yaml:ro
+      - ./logs/open5gs:/var/log/open5gs
+    depends_on:
+      open5gs-ausf:
+        condition: service_started
+      open5gs-udm:
+        condition: service_started
+      open5gs-nssf:
+        condition: service_started
+    networks:
+      oran_5g_net:
+        ipv4_address: 10.0.0.18
+    healthcheck:
+      test: ["CMD", "sh", "-c", "ss -tln | grep -q :7777"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  open5gs-upf:
+    image: local/open5gs:latest
+    container_name: core-upf
+    command: >
+      sh -c '(while ! ip link show ogstun >/dev/null 2>&1; do sleep 0.2; done;
+      ip addr add 10.45.0.1/16 dev ogstun;
+      ip link set ogstun up) &
+      exec open5gs-upfd -c /etc/open5gs/upf.yaml'
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - ./config/open5gs/upf.yaml:/etc/open5gs/upf.yaml:ro
+      - ./logs/open5gs:/var/log/open5gs
+    depends_on:
+      open5gs-nrf:
+        condition: service_healthy
+    networks:
+      oran_5g_net:
+        ipv4_address: 10.0.0.19
+
+  open5gs-smf:
+    image: local/open5gs:latest
+    container_name: core-smf
+    command: open5gs-smfd -c /etc/open5gs/smf.yaml
+    volumes:
+      - ./config/open5gs/smf.yaml:/etc/open5gs/smf.yaml:ro
+      - ./logs/open5gs:/var/log/open5gs
+    depends_on:
+      open5gs-pcf:
+        condition: service_started
+      open5gs-upf:
+        condition: service_started
+    networks:
+      oran_5g_net:
+        ipv4_address: 10.0.0.20
+    healthcheck:
+      test: ["CMD", "sh", "-c", "ss -tln | grep -q :7777"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  open5gs-webui:
+    image: gradiant/open5gs-webui:2.7.5
+    container_name: core-webui
+    environment:
+      - DB_URI=mongodb://10.0.0.10/open5gs
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    ports:
+      - "9999:9999"
+    networks:
+      oran_5g_net:
+        ipv4_address: 10.0.0.21
+
+  # ==========================================
+  # BLOQUE 2: OPEN RAN / OCUDU
+  # Split real de OCUDU: CU-CP (control) + CU-UP (datos) + DU, sobre la
+  # misma red que el resto del laboratorio. Radio virtual por ZMQ.
+  # Imagen ocudu/gnb construida a mano antes de "docker compose up":
+  #   docker build -t ocudu/gnb -f ocudu/docker/Dockerfile ocudu
+  # (tarda bastante la primera vez: compila UHD, DPDK, ROHC y el propio OCUDU)
+  # ==========================================
+  ocudu-cu-cp:
+    image: ocudu/gnb
+    container_name: ran-cu-cp
+    cap_add:
+      - SYS_NICE
+      - IPC_LOCK
+      - PERFMON
+    volumes:
+      - ./config/ocudu/cu_cp_lab.yml:/cu_cp_config.yml:ro
+      - ./logs/ran/cu_cp:/tmp
+    depends_on:
+      open5gs-amf:
+        condition: service_healthy
+    networks:
+      oran_5g_net:
+        ipv4_address: 10.0.0.22
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'for p in 38462 38472; do ss -l -H -A sctp "sport = :$$p" | grep -q . || exit 1; done; exit 0',
+        ]
+      interval: 3s
+      timeout: 1s
+      retries: 60
+    command: ocucp -c /cu_cp_config.yml
+
+  ocudu-cu-up:
+    image: ocudu/gnb
+    container_name: ran-cu-up
+    cap_add:
+      - SYS_NICE
+      - IPC_LOCK
+      - PERFMON
+    volumes:
+      - ./config/ocudu/cu_up_lab.yml:/cu_up_config.yml:ro
+      - ./logs/ran/cu_up:/tmp
+    depends_on:
+      ocudu-cu-cp:
+        condition: service_healthy
+      open5gs-upf:
+        condition: service_started
+    networks:
+      oran_5g_net:
+        ipv4_address: 10.0.0.23
+      f1u_net:
+        ipv4_address: 172.20.0.2
+    command: ocuup -c /cu_up_config.yml
+
+  ocudu-du:
+    image: ocudu/gnb
+    container_name: ran-du
+    cap_add:
+      - SYS_NICE
+      - IPC_LOCK
+      - PERFMON
+    volumes:
+      - ./config/ocudu/du_zmq_lab.yml:/du_config.yml:ro
+      - ./logs/ran/du:/tmp
+    depends_on:
+      ocudu-cu-cp:
+        condition: service_healthy
+    networks:
+      oran_5g_net:
+        ipv4_address: 10.0.0.24
+      f1u_net:
+        ipv4_address: 172.20.0.3
+    command: odu -c /du_config.yml
+
+  # ==========================================
+  # BLOQUE 3: TERMINAL EMULADO (UE) + ZMQ
+  # PENDIENTE DE REVISAR
+  # ==========================================
+  # ==========================================
+  # BLOQUE 3: TERMINAL EMULADO (UE) + ZMQ
+  # ==========================================
+  ue-simulado:
+    image: local/srsue:latest
+    container_name: ue-srsue
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - ./config/ue/ue_zmq_lab.conf:/config/ue_zmq_lab.conf:ro
+      - ./logs/ue:/tmp
+    depends_on:
+      - ocudu-du
+    networks:
+      oran_5g_net:
+        ipv4_address: 10.0.0.30
+    command: srsue /config/ue_zmq_lab.conf
+
+  # ==========================================
+  # BLOQUE 4: CONTROL INTELIGENTE O-RAN (RIC)
+  # PENDIENTE DE REVISAR
+  # ==========================================
+  near-rt-ric:
+    image: python:3.10-slim
+    container_name: oran-ric
+    volumes:
+      - ./config/ric:/config
+      - ./logs/ric:/logs
+    depends_on:
+      - ocudu-cu-cp
+    networks:
+      oran_5g_net:
+        ipv4_address: 10.0.0.40
+    command: >
+      sh -c "echo 'Iniciando Entorno Base Near-RT RIC para TFG...' &&
+             tail -f /dev/null"
+
+  # ==========================================
+  # BLOQUE 5: xApp / IA / OBSERVABILIDAD
+  # PENDIENTE DE REVISAR
+  # ==========================================
+  xapp-ai-monitor:
+    build: ./xapp_ai
+    container_name: xapp-ai-monitor
+    environment:
+      - RIC_IP=10.0.0.40
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+    depends_on:
+      - near-rt-ric
+    networks:
+      oran_5g_net:
+        ipv4_address: 10.0.0.50
+
+networks:
+  oran_5g_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.0.0.0/24
+  f1u_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
+
+volumes:
+  mongo_data:

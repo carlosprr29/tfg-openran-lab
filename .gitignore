@@ -1,0 +1,7 @@
+# Repositorios de terceros clonados (solo los de la raiz)
+/ocudu/
+/srsRAN_4G/
+
+# Salidas generadas en ejecucion
+/logs/
+/data/

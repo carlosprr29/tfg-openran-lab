@@ -1,0 +1,28 @@
+cu_cp:
+  amf:
+    addrs: 10.0.0.18
+    bind_addrs: 10.0.0.22
+    supported_tracking_areas:
+      - tac: 1
+        plmn_list:
+          - plmn: "99970"
+            tai_slice_support_list:
+              - sst: 1
+  inactivity_timer: 7200
+  e1ap:
+    bind_addrs: 10.0.0.22
+  f1ap:
+    bind_addrs: 10.0.0.22
+
+log:
+  filename: /tmp/cu_cp.log
+  all_level: warning
+
+# Capturas para trazas / observabilidad (bloque "Trazas / PCAPs" del diagrama)
+pcap:
+  ngap_enable: true
+  ngap_filename: /tmp/cu_cp_ngap.pcap
+  f1ap_enable: true
+  f1ap_filename: /tmp/cu_cp_f1ap.pcap
+  e1ap_enable: true
+  e1ap_filename: /tmp/cu_cp_e1ap.pcap
