@@ -240,6 +240,8 @@ services:
     networks:
       oran_5g_net:
         ipv4_address: 10.0.0.22
+      ric_net:
+        ipv4_address: 10.0.2.30
     healthcheck:
       test:
         [
@@ -291,6 +293,8 @@ services:
         ipv4_address: 10.0.0.24
       f1u_net:
         ipv4_address: 172.20.0.3
+      ric_net:
+        ipv4_address: 10.0.2.31
     command: odu -c /du_config.yml
 
   # ==========================================
@@ -365,6 +369,12 @@ networks:
     ipam:
       config:
         - subnet: 172.20.0.0/24
+  # Red del Near-RT RIC (creada por el docker-compose de oran-sc-ric).
+  # Se declara como externa: nuestro compose se conecta a ella, no la crea.
+  # Requiere que el RIC este levantado ANTES que la CU-CP y la DU.
+  ric_net:
+    external: true
+    name: oran-sc-ric_ric_network
 
 volumes:
   mongo_data:

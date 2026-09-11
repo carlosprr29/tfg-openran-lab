@@ -11,6 +11,29 @@ f1u:
   socket:
     - bind_addr: 172.20.0.3
 
+# Agente E2 hacia el Near-RT RIC (O-RAN SC, red 10.0.2.0/24)
+e2:
+  enable_du_e2: true
+  addr: 10.0.2.10        # e2term del RIC
+  port: 36421
+  bind_addr: 10.0.2.31   # IP propia de la DU en la red del RIC
+  e2sm_kpm_enabled: true
+
+# Metricas de la DU. Necesarias para que el modelo de servicio E2SM-KPM
+# tenga contadores reales que reportar al RIC: sin ellas la conexion E2
+# funciona pero las indicaciones llegan vacias.
+#   - enable_sched / enable_sched_ue: ya vienen a true por defecto, se
+#     declaran explicitamente por claridad (metricas de scheduler, y por UE)
+#   - enable_rlc: por defecto false, hay que activarla
+#   - du_report_period: 1000 ms (valor por defecto, explicito por claridad)
+metrics:
+  layers:
+    enable_sched: true
+    enable_sched_ue: true
+    enable_rlc: true
+  periodicity:
+    du_report_period: 1000
+
 ru_sdr:
   device_driver: zmq
   # tx_port: esta DU escucha aqui para ENVIAR muestras (DL) al UE

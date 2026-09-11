@@ -52,7 +52,33 @@ else
 fi
 
 echo ""
-echo "=== 2. Core 5G (Open5GS) + WebUI ==="
+echo "=== 2. Near-RT RIC (O-RAN SC) ==="
+RIC_DIR="./oran-sc-ric"
+if [ -d "$RIC_DIR" ]; then
+    (cd "$RIC_DIR" && docker compose up -d >/dev/null 2>&1)
+    sleep 20
+    # e2mgr suele morir en el primer intento por una condicion de carrera con
+    # Redis (dbaas). Se relanza y luego se reinicia e2term para que se registre.
+    if (cd "$RIC_DIR" && docker compose ps e2mgr 2>/dev/null | grep -q "Up"); then
+        ok "RIC arriba (e2mgr sano a la primera)"
+    else
+        warn "e2mgr no arranco a la primera (carrera con Redis) - relanzando..."
+        (cd "$RIC_DIR" && docker compose up -d e2mgr >/dev/null 2>&1)
+        sleep 15
+        (cd "$RIC_DIR" && docker compose restart e2term >/dev/null 2>&1)
+        sleep 15
+        if (cd "$RIC_DIR" && docker compose ps e2mgr 2>/dev/null | grep -q "Up"); then
+            ok "RIC arriba tras relanzar e2mgr"
+        else
+            err "e2mgr sigue caido. Revisa: cd $RIC_DIR && docker compose logs e2mgr"
+        fi
+    fi
+else
+    warn "No se encuentra $RIC_DIR - se omite el RIC (la CU-CP y la DU fallaran si ric_net no existe)"
+fi
+
+echo ""
+echo "=== 3. Core 5G (Open5GS) + WebUI ==="
 docker compose up -d mongodb open5gs-nrf open5gs-ausf open5gs-udm open5gs-udr \
     open5gs-pcf open5gs-bsf open5gs-nssf open5gs-amf open5gs-upf open5gs-smf open5gs-webui
 
@@ -64,7 +90,7 @@ else
 fi
 
 echo ""
-echo "=== 3. OCUDU: CU-CP y CU-UP ==="
+echo "=== 4. OCUDU: CU-CP y CU-UP ==="
 docker compose up -d ocudu-cu-cp
 if wait_healthy ocudu-cu-cp 30; then
     ok "CU-CP sana"
@@ -80,7 +106,7 @@ else
 fi
 
 echo ""
-echo "=== 4. OCUDU: DU ==="
+echo "=== 5. OCUDU: DU ==="
 docker compose up -d ocudu-du
 if wait_up ocudu-du 15; then
     ok "DU arriba (F1 establecido, celda activa)"
@@ -89,7 +115,20 @@ else
 fi
 
 echo ""
-echo "=== 5. UE simulado (srsUE, radio ZMQ) ==="
+echo "=== 6. UE simulado (srsUE, radio ZMQ) ==="
+# IMPORTANTE: el UE hace connect contra el socket ZMQ de la DU (que hace bind),
+# asi que la celda tiene que estar activa ANTES de arrancarlo. Si no, ambos
+# extremos se quedan esperandose mutuamente sin emparejarse.
+echo "Esperando a que la celda de la DU este activa..."
+cell_ok=0
+for i in $(seq 1 15); do
+    if grep -q "Cell was activated" logs/ran/du/du.log 2>/dev/null; then
+        cell_ok=1; break
+    fi
+    sleep 2
+done
+[ "$cell_ok" = "1" ] && ok "Celda activa" || warn "No se confirmo 'Cell was activated' en el log de la DU"
+
 docker compose up -d ue-simulado
 if wait_up ue-simulado 20; then
     ok "UE arriba"
