@@ -1,23 +1,45 @@
 name: tfg-openran-lab
 
-# ==========================================
-# Rango de IPs de referencia (red 10.0.0.0/24)
-# ------------------------------------------
-# 10.0.0.10        mongodb
-# 10.0.0.11 - .20  Core 5G (Open5GS, un contenedor por NF)
-# 10.0.0.21        Open5GS WebUI
-# 10.0.0.22        OCUDU CU-CP (control)
-# 10.0.0.23        OCUDU CU-UP (datos)
-# 10.0.0.24        OCUDU DU
-# 10.0.0.30        UE simulado                     -> pendiente de revisar
-# 10.0.0.40        Near-RT RIC                     -> pendiente de revisar
-# 10.0.0.50        xApp / IA                       -> pendiente de revisar
-# ==========================================
+# =============================================================================
+# Laboratorio 5G Open RAN
+# -----------------------------------------------------------------------------
+# Este fichero define los 16 contenedores propios del laboratorio (bloques 1-3).
+# El Near-RT RIC (bloque 4) es un despliegue aparte, en ./oran-sc-ric, con su
+# propio docker-compose.yml. Ambos se comunican a traves de la red ric_net,
+# declarada aqui como externa (ver al final del fichero).
+#
+# Arranque recomendado: ./start-lab.sh  (respeta el orden y verifica cada paso)
+#
+# -----------------------------------------------------------------------------
+# Direccionamiento
+# -----------------------------------------------------------------------------
+# Red oran_5g_net (10.0.0.0/24) - red principal del laboratorio
+#   10.0.0.10        MongoDB
+#   10.0.0.11 - .20  Core 5G (Open5GS, un contenedor por Network Function)
+#   10.0.0.21        Open5GS WebUI
+#   10.0.0.22        OCUDU CU-CP
+#   10.0.0.23        OCUDU CU-UP
+#   10.0.0.24        OCUDU DU
+#   10.0.0.30        UE simulado (srsUE)
+#
+# Red f1u_net (172.20.0.0/24) - solo trafico F1-U entre CU-UP y DU
+#   172.20.0.2       OCUDU CU-UP
+#   172.20.0.3       OCUDU DU
+#
+# Red ric_net (10.0.2.0/24) - externa, la crea el compose de oran-sc-ric
+#   10.0.2.30        OCUDU CU-CP (agente E2)
+#   10.0.2.31        OCUDU DU (agente E2)
+#
+# Subred de terminales: 10.45.0.0/16, con puerta de enlace 10.45.0.1 en la
+# interfaz ogstun del UPF.
+# =============================================================================
 
 services:
-  # ==========================================
-  # BLOQUE 1: CORE 5G (Open5GS) - un contenedor por Network Function
-  # ==========================================
+  # ===========================================================================
+  # BLOQUE 1: CORE 5G (Open5GS)
+  # Un contenedor por Network Function, mas MongoDB y la interfaz web.
+  # Imagen: docker build -t local/open5gs:latest -f Dockerfile.open5gs .
+  # ===========================================================================
   mongodb:
     image: mongo:7.0
     container_name: core-mongodb
@@ -159,6 +181,10 @@ services:
       timeout: 3s
       retries: 5
 
+  # El UPF necesita la interfaz ogstun activa para entregar el trafico de los
+  # terminales. open5gs-upfd crea el dispositivo pero no lo levanta ni le
+  # asigna IP (es un paso manual en la documentacion oficial), asi que se hace
+  # aqui en paralelo al arranque del demonio.
   open5gs-upf:
     image: local/open5gs:latest
     container_name: core-upf
@@ -202,6 +228,9 @@ services:
       timeout: 3s
       retries: 5
 
+  # Interfaz web para dar de alta suscriptores, en localhost:9999.
+  # Usuario admin / contrasena 1423. Si el login falla, ver config/ric/NOTAS-RIC.md:
+  # la cuenta por defecto no siempre se crea sola.
   open5gs-webui:
     image: gradiant/open5gs-webui:2.7.5
     container_name: core-webui
@@ -216,14 +245,19 @@ services:
       oran_5g_net:
         ipv4_address: 10.0.0.21
 
-  # ==========================================
-  # BLOQUE 2: OPEN RAN / OCUDU
-  # Split real de OCUDU: CU-CP (control) + CU-UP (datos) + DU, sobre la
-  # misma red que el resto del laboratorio. Radio virtual por ZMQ.
-  # Imagen ocudu/gnb construida a mano antes de "docker compose up":
-  #   docker build -t ocudu/gnb -f ocudu/docker/Dockerfile ocudu
-  # (tarda bastante la primera vez: compila UHD, DPDK, ROHC y el propio OCUDU)
-  # ==========================================
+  # ===========================================================================
+  # BLOQUE 2: RED DE ACCESO RADIO (OCUDU)
+  # Split completo: CU-CP (control), CU-UP (datos) y DU (capas bajas).
+  # Radio virtual por ZMQ, sin hardware de radiofrecuencia.
+  #
+  # Imagen (construir antes del primer arranque, tarda bastante):
+  #   docker build -t ocudu/gnb -f ocudu/docker/Dockerfile ocudu \
+  #     --build-arg EXTRA_CMAKE_ARGS="-DENABLE_ZEROMQ=ON -DENABLE_EXPORT=ON" \
+  #     --build-arg NUM_JOBS=2
+  #
+  # Los tres binarios llevan capacidades Linux grabadas (setcap): sin cap_add
+  # el kernel rechaza ejecutarlos con "operation not permitted".
+  # ===========================================================================
   ocudu-cu-cp:
     image: ocudu/gnb
     container_name: ran-cu-cp
@@ -242,6 +276,8 @@ services:
         ipv4_address: 10.0.0.22
       ric_net:
         ipv4_address: 10.0.2.30
+    # Comprueba que los puertos SCTP de E1 (38462) y F1-C (38472) escuchan.
+    # El $$p escapa la variable de shell para que Compose no la interpole.
     healthcheck:
       test:
         [
@@ -297,66 +333,126 @@ services:
         ipv4_address: 10.0.2.31
     command: odu -c /du_config.yml
 
-  # ==========================================
-  # BLOQUE 3: TERMINAL EMULADO (UE) + ZMQ
-  # PENDIENTE DE REVISAR
-  # ==========================================
-  # ==========================================
-  # BLOQUE 3: TERMINAL EMULADO (UE) + ZMQ
-  # ==========================================
-  ue-simulado:
+  # ===========================================================================
+  # BROKER ZMQ MULTI-UE
+  # La DU tiene un solo par de puertos ZMQ, asi que no puede hablar con varios
+  # terminales a la vez. El broker reparte la senal de bajada a cada UE y
+  # agrega las de subida. Ver config/ocudu/NOTAS-MULTIUE.md
+  #
+  # Imagen: docker build -t local/ue-broker:latest broker/
+  #
+  # ORDEN DE ARRANQUE: el broker va el ULTIMO, despues de los terminales.
+  # No se declara con depends_on a proposito: el orden lo controla
+  # start-lab.sh, donde esta toda la logica de arranque y verificacion.
+  # Los terminales no conectaran hasta que el broker este en marcha.
+  #
+  # UE_GAINS: atenuacion por terminal (1.0 = senal intacta). Es el equivalente
+  # a los deslizadores de la version grafica del broker oficial.
+  # ===========================================================================
+  ue-broker:
+    image: local/ue-broker:latest
+    container_name: ue-broker
+    shm_size: '2gb'
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DU_ADDR=10.0.0.24
+      - DU_TX_PORT=2000
+      - DU_RX_PORT=2001
+      - UE_ADDRS=10.0.0.30,10.0.0.31,10.0.0.32
+      - UE_TX_PORTS=2101,2201,2301
+      - UE_RX_PORTS=2100,2200,2300
+      - UE_GAINS=1.0,1.0,1.0
+    networks:
+      oran_5g_net:
+        ipv4_address: 10.0.0.35
+
+  # ===========================================================================
+  # BLOQUE 3: TERMINALES EMULADOS (srsUE)
+  # Tres terminales independientes, cada uno con su IMSI, sus puertos ZMQ y sus
+  # ficheros de log y captura propios. Todos hablan con el broker, no con la DU.
+  #
+  # Se eligen al arrancar:
+  #   ./start-lab.sh --ues 1     solo ue1
+  #   ./start-lab.sh --ues 2     ue1 y ue2
+  #   ./start-lab.sh             los tres (por defecto)
+  #
+  # Imagen: docker build -t local/srsue:latest srsRAN_4G
+  # ===========================================================================
+  ue1:
     image: local/srsue:latest
-    container_name: ue-srsue
+    container_name: ue-srsue1
+    # NET_ADMIN y /dev/net/tun: el terminal crea la interfaz tun_srsue al
+    # establecer la sesion de datos.
     cap_add:
       - NET_ADMIN
     devices:
       - /dev/net/tun:/dev/net/tun
     volumes:
-      - ./config/ue/ue_zmq_lab.conf:/config/ue_zmq_lab.conf:ro
+      - ./config/ue/ue1.conf:/config/ue.conf:ro
       - ./logs/ue:/tmp
     depends_on:
       - ocudu-du
     networks:
       oran_5g_net:
         ipv4_address: 10.0.0.30
-    command: srsue /config/ue_zmq_lab.conf
+    command: srsue /config/ue.conf
 
-  # ==========================================
-  # BLOQUE 4: CONTROL INTELIGENTE O-RAN (RIC)
-  # PENDIENTE DE REVISAR
-  # ==========================================
-  near-rt-ric:
-    image: python:3.10-slim
-    container_name: oran-ric
+  ue2:
+    image: local/srsue:latest
+    container_name: ue-srsue2
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
     volumes:
-      - ./config/ric:/config
-      - ./logs/ric:/logs
+      - ./config/ue/ue2.conf:/config/ue.conf:ro
+      - ./logs/ue:/tmp
     depends_on:
-      - ocudu-cu-cp
+      - ocudu-du
     networks:
       oran_5g_net:
-        ipv4_address: 10.0.0.40
-    command: >
-      sh -c "echo 'Iniciando Entorno Base Near-RT RIC para TFG...' &&
-             tail -f /dev/null"
+        ipv4_address: 10.0.0.31
+    command: srsue /config/ue.conf
 
-  # ==========================================
-  # BLOQUE 5: xApp / IA / OBSERVABILIDAD
-  # PENDIENTE DE REVISAR
-  # ==========================================
-  xapp-ai-monitor:
-    build: ./xapp_ai
-    container_name: xapp-ai-monitor
-    environment:
-      - RIC_IP=10.0.0.40
+  ue3:
+    image: local/srsue:latest
+    container_name: ue-srsue3
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
     volumes:
-      - ./logs:/app/logs
-      - ./data:/app/data
+      - ./config/ue/ue3.conf:/config/ue.conf:ro
+      - ./logs/ue:/tmp
     depends_on:
-      - near-rt-ric
+      - ocudu-du
     networks:
       oran_5g_net:
-        ipv4_address: 10.0.0.50
+        ipv4_address: 10.0.0.32
+    command: srsue /config/ue.conf
+
+  # ===========================================================================
+  # BLOQUE 4: NEAR-RT RIC
+  # No se define aqui. Son los 7 contenedores de ./oran-sc-ric, con su propio
+  # docker-compose.yml y su red 10.0.2.0/24. La CU-CP y la DU se conectan a esa
+  # red (ric_net) para el interfaz E2.
+  # ===========================================================================
+
+  # ===========================================================================
+  # BLOQUE 5: MODULO DE IA (pendiente de desarrollo)
+  # Contenedor donde correra el modulo de deteccion de anomalias: leera las
+  # metricas recogidas por la xApp desde ./data y generara las alertas.
+  # Descomentar cuando exista el codigo en ./xapp_ai.
+  # ===========================================================================
+  # xapp-ai-monitor:
+  #   build: ./xapp_ai
+  #   container_name: xapp-ai-monitor
+  #   volumes:
+  #     - ./logs:/app/logs
+  #     - ./data:/app/data
+  #   networks:
+  #     oran_5g_net:
+  #       ipv4_address: 10.0.0.50
 
 networks:
   oran_5g_net:
@@ -364,14 +460,18 @@ networks:
     ipam:
       config:
         - subnet: 10.0.0.0/24
+
+  # Red dedicada al trafico F1-U entre CU-UP y DU. Necesaria porque N3 y F1-U
+  # comparten el puerto 2152 (GTP-U) y no pueden convivir en la misma IP.
   f1u_net:
     driver: bridge
     ipam:
       config:
         - subnet: 172.20.0.0/24
-  # Red del Near-RT RIC (creada por el docker-compose de oran-sc-ric).
-  # Se declara como externa: nuestro compose se conecta a ella, no la crea.
-  # Requiere que el RIC este levantado ANTES que la CU-CP y la DU.
+
+  # Red del Near-RT RIC, creada por el docker-compose de oran-sc-ric.
+  # Externa: este fichero se conecta a ella, no la crea. Implica que el RIC
+  # debe estar levantado ANTES que la CU-CP y la DU.
   ric_net:
     external: true
     name: oran-sc-ric_ric_network
