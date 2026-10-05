@@ -41,7 +41,7 @@ ru_sdr:
   #
   # MULTI-UE: el rx_port apunta al BROKER (10.0.0.35), no a un UE concreto.
   # El broker es quien habla con cada terminal.
-  device_args: tx_port=tcp://10.0.0.24:2000,rx_port=tcp://10.0.0.35:2001,base_srate=11.52e6
+  device_args: tx_port=tcp://10.0.0.24:2000,rx_port=tcp://10.0.0.1:2001,base_srate=11.52e6
   srate: 11.52
   # tx_gain / rx_gain: NO validos con ZMQ (el validador exige <= 0.0 dB,
   # solo tienen sentido con una radio real tipo USRP). Se omiten.
