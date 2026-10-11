@@ -1,11 +1,7 @@
 # DU con radio virtual ZMQ (en vez de USRP real) para el laboratorio.
-#
-# Configurada para escenario MULTI-UE: la DU no habla directamente con los
-# terminales, sino con un broker de GNU Radio que reparte la senal de bajada a
-# cada UE y agrega las de subida. Ver config/ocudu/NOTAS-MULTIUE.md
-#
-# Ancho de banda reducido a 10 MHz (antes 20) para aligerar la carga de CPU,
-# siguiendo el ejemplo oficial de srsRAN para multi-UE. Implica srate 11.52.
+# cell_cfg / pdcch / prach / mcs replican gnb_rf_b210_fdd_srsUE.yml del propio
+# repo de OCUDU, que el propio archivo indica que esta ajustado para ser
+# compatible con las capacidades de srsUE.
 
 f1ap:
   addrs: 10.0.0.22       # CU-CP
@@ -26,6 +22,10 @@ e2:
 # Metricas de la DU. Necesarias para que el modelo de servicio E2SM-KPM
 # tenga contadores reales que reportar al RIC: sin ellas la conexion E2
 # funciona pero las indicaciones llegan vacias.
+#   - enable_sched / enable_sched_ue: ya vienen a true por defecto, se
+#     declaran explicitamente por claridad (metricas de scheduler, y por UE)
+#   - enable_rlc: por defecto false, hay que activarla
+#   - du_report_period: 1000 ms (valor por defecto, explicito por claridad)
 metrics:
   layers:
     enable_sched: true
@@ -36,13 +36,10 @@ metrics:
 
 ru_sdr:
   device_driver: zmq
-  # tx_port: la DU escucha aqui para ENVIAR muestras (DL) hacia el broker
-  # rx_port: la DU se conecta aqui para RECIBIR las muestras (UL) del broker
-  #
-  # MULTI-UE: el rx_port apunta al BROKER (10.0.0.35), no a un UE concreto.
-  # El broker es quien habla con cada terminal.
-  device_args: tx_port=tcp://10.0.0.24:2000,rx_port=tcp://10.0.0.1:2001,base_srate=11.52e6
-  srate: 11.52
+  # tx_port: esta DU escucha aqui para ENVIAR muestras (DL) al UE
+  # rx_port: esta DU se conecta aqui para RECIBIR muestras (UL) del UE
+  device_args: tx_port=tcp://10.0.0.24:2000,rx_port=tcp://10.0.0.30:2001,base_srate=23.04e6
+  srate: 23.04
   # tx_gain / rx_gain: NO validos con ZMQ (el validador exige <= 0.0 dB,
   # solo tienen sentido con una radio real tipo USRP). Se omiten.
 
@@ -50,7 +47,7 @@ cell_cfg:
   pci: 1
   dl_arfcn: 368500
   band: 3
-  channel_bandwidth_MHz: 10
+  channel_bandwidth_MHz: 20
   common_scs: 15
   plmn: "99970"
   tac: 1
@@ -60,16 +57,9 @@ cell_cfg:
       dci_format_0_1_and_1_1: false
     common:
       ss0_index: 0
-  # PRACH ajustado para multi-UE: con varios terminales accediendo a la vez
-  # hay que garantizar preambulos suficientes para que no colisionen.
-  #   - total_nof_ra_preambles: 64 es ya el valor por defecto, explicito aqui
-  #   - nof_ssb_per_ro: 1 es el unico valor admitido en esta version
-  #   - nof_cb_preambles_per_ssb: sin valor por defecto, se fija a 64
+      coreset0_index: 12
   prach:
     prach_config_index: 1
-    total_nof_ra_preambles: 64
-    nof_ssb_per_ro: 1
-    nof_cb_preambles_per_ssb: 64
   pdsch:
     mcs_table: qam64
   pusch:

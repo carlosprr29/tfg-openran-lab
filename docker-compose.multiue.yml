@@ -1,0 +1,100 @@
+# =============================================================================
+# Escenario MULTI-UE (experimental)
+# -----------------------------------------------------------------------------
+# Fichero de superposicion. NO se usa solo: se combina con el compose base.
+# El script start-multiue.sh lo hace automaticamente.
+#
+#   docker compose -f docker-compose.yaml -f docker-compose.multiue.yml ...
+#
+# Que cambia respecto al escenario base:
+#   - La DU usa du_zmq_multiue.yml (10 MHz, PRACH ampliado, rx hacia el broker)
+#   - Se desactiva el terminal unico y se activan ue1, ue2 y ue3
+#   - Se anade el broker en 10.0.0.35
+#
+# TODOS los extremos ZMQ apuntan al broker en 10.0.0.35. No mezclar con
+# 10.0.0.1 (la puerta de enlace del anfitrion), que corresponde a la variante
+# en que el flujo de GNU Radio se ejecuta fuera de los contenedores.
+#
+# Estado y diagnostico: config/ocudu/NOTAS-MULTIUE.md
+# =============================================================================
+
+services:
+  # La DU carga la configuracion de 10 MHz apuntando al broker
+  ocudu-du:
+    volumes:
+      - ./config/ocudu/du_zmq_multiue.yml:/du_config.yml:ro
+      - ./logs/ran/du:/tmp
+
+  # El terminal unico del escenario base no debe convivir con los tres:
+  # comparten la IP 10.0.0.30. Se desactiva con un perfil que no se usa.
+  ue-simulado:
+    profiles: ["desactivado"]
+
+  # ---------------------------------------------------------------------------
+  # Broker ZMQ: copia la bajada hacia cada terminal y agrega las subidas.
+  # Imagen: docker build -t local/ue-broker:latest broker/intento-propio/
+  # ---------------------------------------------------------------------------
+  ue-broker:
+    image: local/ue-broker:latest
+    container_name: ue-broker
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DU_ADDR=10.0.0.24
+      - DU_TX_PORT=2000
+      - DU_RX_PORT=2001
+      # El numero de terminales se ajusta al arrancar (ver start-multiue.sh).
+      # Por defecto, los tres.
+      - UE_ADDRS=10.0.0.30,10.0.0.31,10.0.0.32
+      - UE_TX_PORTS=2101,2201,2301
+      - UE_RX_PORTS=2100,2200,2300
+      # Atenuacion por terminal (1.0 = senal intacta)
+      - UE_GAINS=1.0,1.0,1.0
+      - SAMP_RATE=23.04e6
+    networks:
+      oran_5g_net:
+        ipv4_address: 10.0.0.35
+
+  # ---------------------------------------------------------------------------
+  # Terminales. Cada uno con su IMSI, sus puertos y sus ficheros propios.
+  # ---------------------------------------------------------------------------
+  ue1:
+    image: local/srsue:latest
+    container_name: ue-srsue1
+    cap_add: [NET_ADMIN]
+    devices: ["/dev/net/tun:/dev/net/tun"]
+    volumes:
+      - ./config/ue/ue1.conf:/config/ue.conf:ro
+      - ./logs/ue:/tmp
+    depends_on: [ocudu-du]
+    networks:
+      oran_5g_net:
+        ipv4_address: 10.0.0.30
+    command: srsue /config/ue.conf
+
+  ue2:
+    image: local/srsue:latest
+    container_name: ue-srsue2
+    cap_add: [NET_ADMIN]
+    devices: ["/dev/net/tun:/dev/net/tun"]
+    volumes:
+      - ./config/ue/ue2.conf:/config/ue.conf:ro
+      - ./logs/ue:/tmp
+    depends_on: [ocudu-du]
+    networks:
+      oran_5g_net:
+        ipv4_address: 10.0.0.31
+    command: srsue /config/ue.conf
+
+  ue3:
+    image: local/srsue:latest
+    container_name: ue-srsue3
+    cap_add: [NET_ADMIN]
+    devices: ["/dev/net/tun:/dev/net/tun"]
+    volumes:
+      - ./config/ue/ue3.conf:/config/ue.conf:ro
+      - ./logs/ue:/tmp
+    depends_on: [ocudu-du]
+    networks:
+      oran_5g_net:
+        ipv4_address: 10.0.0.32
+    command: srsue /config/ue.conf
