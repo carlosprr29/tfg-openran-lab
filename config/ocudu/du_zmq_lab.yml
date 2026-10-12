@@ -38,7 +38,7 @@ ru_sdr:
   device_driver: zmq
   # tx_port: esta DU escucha aqui para ENVIAR muestras (DL) al UE
   # rx_port: esta DU se conecta aqui para RECIBIR muestras (UL) del UE
-  device_args: tx_port=tcp://10.0.0.24:2000,rx_port=tcp://10.0.0.30:2001,base_srate=23.04e6
+  device_args: tx_port=tcp://10.0.0.24:2000,rx_port=tcp://10.0.0.35:2001,base_srate=23.04e6
   srate: 23.04
   # tx_gain / rx_gain: NO validos con ZMQ (el validador exige <= 0.0 dB,
   # solo tienen sentido con una radio real tipo USRP). Se omiten.
