@@ -19,11 +19,9 @@
 # =============================================================================
 
 services:
-  # La DU carga la configuracion de 10 MHz apuntando al broker
-  ocudu-du:
-    volumes:
-      - ./config/ocudu/du_zmq_multiue.yml:/du_config.yml:ro
-      - ./logs/ran/du:/tmp
+  # La DU NO se sobreescribe aqui: usa la configuracion del compose base
+  # (du_zmq_lab.yml, 20 MHz). Sobreescribirla hacia que se recreara al
+  # levantar los terminales, cambiando de configuracion a mitad de arranque.
 
   # El terminal unico del escenario base no debe convivir con los tres:
   # comparten la IP 10.0.0.30. Se desactiva con un perfil que no se usa.
