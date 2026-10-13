@@ -440,3 +440,169 @@ funcional para el escenario de un terminal:
 Se propone restaurar el escenario estable de un terminal a partir de la
 etiqueta `v3-arranque-fiable` y mantener el multi-UE como modo experimental
 separado.
+
+---
+
+# Bitácora IV: cierre del multi-UE
+
+## Corrección de la conclusión anterior
+
+La prueba de aislamiento de la Bitácora III (conectar una fuente de GNU Radio
+al puerto de transmisión de la DU sin nadie en el lado de subida) **no era
+válida**. El enlace de radio es un bucle: la DU procesa cada intervalo
+transmitiendo y recibiendo, de modo que si su recepción está parada el bucle
+no avanza y nunca llega a transmitir. Esa prueba demostró que la DU no
+transmite cuando no recibe, que es el comportamiento esperado, no una
+incompatibilidad con GNU Radio.
+
+Se corrige por tanto la afirmación de que «GNU Radio no puede hablar con
+OCUDU»: no está demostrada.
+
+## Lo que sí quedó demostrado
+
+En una de las ejecuciones, con todos los extremos apuntando coherentemente al
+broker en `10.0.0.35`, **las muestras llegaron a circular**: la DU transmitió
+8 MB en 10 segundos y el broker movió 598 MB. Es la primera y única vez que el
+camino completo estuvo abierto.
+
+Sin embargo, el resultado **no fue reproducible**: repitiendo exactamente la
+misma configuración, el caudal volvió a cero. Y en las ocasiones en que
+circulaban datos, los bloques nunca se completaban: el registro de la DU
+mostraba `Completed 3840 of 11520 samples` o `8192 of 11520`, nunca el bloque
+entero, por lo que el terminal no llegaba a sincronizar con la celda.
+
+## Precedentes que sí funcionan, y en qué se diferencian
+
+Se localizó el proyecto EdgeRIC (`github.com/ushasigh/srsran-edgeric-5g`), que
+ejecuta 2 y 4 terminales sobre ZMQ en un entorno de investigación y distribuye
+su broker como fichero de GNU Radio sin interfaz (`top_block_2ue_no_gui.py`).
+También OAIC documenta un escenario de cinco terminales.
+
+Comparando su broker con el nuestro se identificó una diferencia estructural:
+colocan un **bloque de regulación de ritmo en cada salida**, mientras que el
+flujo oficial de srsRAN usa uno solo antes del reparto y el nuestro no tenía
+ninguno. Se replicó esa estructura y se probó además a la frecuencia de
+muestreo que ellos emplean (23,04 MHz). El resultado no cambió.
+
+Diferencias que permanecen respecto a esos precedentes: ejecutan los
+componentes como procesos nativos de una misma máquina, no en contenedores; y
+EdgeRIC emplea una versión modificada del gNB con sus propias extensiones.
+
+## Criterio del mantenedor del proyecto
+
+En la discusión #1015 de srsRAN_Project (enero de 2025), el mantenedor afirma
+que ZMQ debe usarse como un canal único por pareja celda-terminal, y que
+aunque el tutorial explique cómo conectar tres terminales mediante un broker
+de GNU Radio, **eso ya está más allá de aquello para lo que ZMQ fue diseñado**.
+El usuario de ese hilo concluye que su planteamiento basado en el tutorial con
+varios terminales software satura ZMQ.
+
+Ese diagnóstico es coherente con el síntoma observado aquí: bloques de
+muestras que llegan incompletos y de forma intermitente.
+
+## Resumen de todo lo probado
+
+| Variable | Valores probados | Resultado |
+|---|---|---|
+| Broker | Propio (pyzmq sobre GNU Radio) y flujo oficial `.grc` | Igual en ambos |
+| Terminales | Uno y tres | Igual |
+| Ubicación de los terminales | Contenedor y procesos nativos del anfitrión | Igual |
+| Ancho de banda | 5, 10 y 20 MHz | Igual |
+| Regulación de ritmo | Sin regulador, uno global, uno por salida | Igual |
+| Memoria compartida | Por defecto y 2 GB | Igual |
+| Modo publicación-suscripción | — | Descartado: OCUDU no lo implementa |
+
+## Decisión
+
+Se cierra la línea de multi-UE. El escenario de un terminal, que funciona de
+forma estable y está validado de extremo a extremo, se mantiene como
+configuración del laboratorio.
+
+La limitación se documenta como resultado del trabajo: la emulación de varios
+terminales sobre ZMQ con srsUE no es viable en este entorno, lo cual es
+coherente tanto con el criterio del mantenedor del proyecto como con la
+ausencia de precedentes en la literatura revisada, donde todos los bancos de
+pruebas que emplean varios terminales recurren a hardware de radio real.
+
+## Qué se conserva, por si se retoma
+
+- Tres suscriptores dados de alta en MongoDB.
+- Las tres configuraciones de terminal (`config/ue/ue1..3.conf`) y sus
+  equivalentes para ejecución nativa (`config/ue-host/`).
+- La configuración de DU para multi-UE (`config/ocudu/du_zmq_multiue.yml`).
+- El broker propio (`broker/intento-propio/`) y el flujo oficial adaptado
+  (`broker/multi_ue_scenario.grc`).
+- El fichero de superposición `docker-compose.multiue.yml` y el script
+  `start-multiue.sh`, que automatiza el arranque por fases con verificación.
+
+## Vías abiertas para trabajo futuro
+
+- **Simulador de radio de OpenAirInterface**: según la literatura revisada, la
+  única alternativa software documentada que admite varios terminales de forma
+  nativa, sin broker, y que puede desplegarse con Docker Compose. Implicaría
+  sustituir el bloque de acceso radio.
+- **Hardware de radio real**: todos los bancos de pruebas con varios
+  terminales de los artículos revisados emplean equipos SDR.
+- **Simulador comercial de terminales**: la opción que recomiendan los propios
+  desarrolladores de srsRAN para escenarios multi-UE.
+
+---
+
+# Bitácora V: RESUELTO
+
+**La conclusión de la Bitácora IV queda anulada.** El multi-UE funciona: tres
+terminales simultáneos, los tres con sesión de datos y tráfico sin pérdidas.
+
+Este fichero se conserva como bitácora cronológica del proceso. La
+documentación de referencia pasa a estar en:
+
+- **`MULTIUE-RECETA.md`** — procedimiento operativo verificado.
+- **`MULTIUE-HISTORIAL.md`** — análisis del diagnóstico y lecciones de método.
+
+## Qué lo resolvió
+
+Volver al último estado estable y cambiar **una sola cosa**: las dos
+direcciones de recepción, para que la DU y el terminal recibieran del broker
+en lugar de hacerlo directamente el uno del otro. Nada más: mismo ancho de
+banda de 20 MHz, misma frecuencia de muestreo, mismo `coreset0_index`, mismo
+PRACH.
+
+Funcionó a la primera. Después se añadió el segundo terminal y luego el
+tercero, repitiendo el mismo procedimiento.
+
+## Resultado medido
+
+| Escenario | Caudal DU (10 s) | Latencia media | Sesiones |
+|---|---|---|---|
+| Directo, 1 terminal | 1,59 GB | 46 ms | 1 de 1 |
+| Broker, 1 terminal | 0,55 GB | 112 ms | 1 de 1 |
+| Broker, 2 terminales | 1,01 GB | 56 ms | 2 de 2 |
+| Broker, 3 terminales | 1,02 GB | 61 ms | 3 de 3 |
+
+Ping sin pérdidas en todos los casos.
+
+## Por qué fallaba antes
+
+Tres causas, ninguna de ellas el broker:
+
+1. **Se medía la interfaz equivocada.** Docker no garantiza el orden de las
+   interfaces al recrear un contenedor, y durante semanas se observó la de
+   F1-U creyendo que era la de radio.
+2. **El fichero de superposición recreaba la DU** con otra configuración a
+   mitad del arranque.
+3. **Se cambiaban varias cosas a la vez**, lo que impedía saber cuál rompía
+   qué.
+
+El detalle de cada una está en `MULTIUE-HISTORIAL.md`.
+
+## Corrección de las conclusiones anteriores
+
+- La Bitácora III afirmaba que GNU Radio no podía dialogar con OCUDU. **Falso**,
+  y ya se señaló allí que la prueba de aislamiento era inválida.
+- La Bitácora IV concluía que el multi-UE sobre ZMQ no era viable en este
+  entorno. **Falso.**
+
+Ambas se mantienen en el documento sin modificar, con esta corrección al
+final, porque el recorrido forma parte del trabajo. La advertencia del
+mantenedor de srsRAN sobre que este escenario excede el diseño de ZMQ sigue
+siendo pertinente como aviso de fragilidad, pero no implica imposibilidad.
