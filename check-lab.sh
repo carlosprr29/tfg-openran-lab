@@ -175,24 +175,35 @@ fi
 
 # ---------------------------------------------------------------------------
 echo ""
-echo "=== 4. Terminal (srsUE) ==="
+echo "=== 4. Terminales (srsUE) ==="
 
-if docker ps --format '{{.Names}}' | grep -q '^ue-srsue$'; then
-    ok "Contenedor del terminal en marcha"
+# Reconoce tanto el escenario de un terminal como el multi-UE
+TERMINALES=""
+for c in ue-srsue ue-srsue2 ue-srsue3; do
+    docker ps --format '{{.Names}}' | grep -q "^${c}$" && TERMINALES="$TERMINALES $c"
+done
 
-    if docker exec ue-srsue ip addr show tun_srsue >/dev/null 2>&1; then
-        ip_ue=$(docker exec ue-srsue ip -4 addr show tun_srsue 2>/dev/null \
-            | grep -oE 'inet [0-9.]+' | awk '{print $2}')
-        ok "Sesion de datos activa, IP del terminal: $ip_ue"
-    else
-        err "La interfaz tun_srsue no existe: el terminal no tiene sesion"
-        info "Solucion habitual (ver config/NOTAS-ARRANQUE.md):"
-        info "  docker compose stop ue-simulado"
-        info "  docker compose restart ocudu-du && sleep 70"
-        info "  docker compose up -d ue-simulado"
-    fi
+if docker ps --format '{{.Names}}' | grep -q '^ue-broker$'; then
+    ok "Broker multi-UE en marcha"
+fi
+
+if [ -z "$TERMINALES" ]; then
+    err "No hay ningun terminal en marcha"
+    info "  Un terminal:  ./start-lab.sh"
+    info "  Tres:         ./lab-multiue.sh"
 else
-    err "El contenedor del terminal no esta en marcha"
+    for c in $TERMINALES; do
+        ip_ue=$(docker exec "$c" ip -4 addr show tun_srsue 2>/dev/null \
+            | grep -oE 'inet [0-9.]+' | awk '{print $2}')
+        if [ -n "$ip_ue" ]; then
+            ok "$c -> sesion activa, IP $ip_ue"
+        else
+            err "$c -> sin sesion (la interfaz tun_srsue no existe)"
+            info "Solucion habitual: reiniciar DU y terminales en orden."
+            info "  Un terminal:  ver config/NOTAS-ARRANQUE.md"
+            info "  Multi-UE:     ./lab-multiue.sh"
+        fi
+    done
 fi
 
 # ---------------------------------------------------------------------------
@@ -231,28 +242,30 @@ fi
 echo ""
 echo "=== 6. Plano de usuario (extremo a extremo) ==="
 
-ping_out=$(docker exec ue-srsue ping -c 4 -W 3 10.45.0.1 2>&1)
-ping_rc=$?
-
-if [ "$ping_rc" -eq 0 ]; then
-    ok "Ping UE -> UPF correcto"
+if [ -z "$TERMINALES" ]; then
+    err "Sin terminales en marcha: no se puede probar el plano de usuario"
 else
-    err "El ping UE -> UPF no responde"
+    for c in $TERMINALES; do
+        if docker exec "$c" ping -c 3 -W 3 10.45.0.1 >/dev/null 2>&1; then
+            rtt=$(docker exec "$c" ping -c 3 -W 3 10.45.0.1 2>/dev/null \
+                | tail -1 | cut -d'=' -f2)
+            ok "$c -> ping correcto (${rtt:- n/d})"
+        else
+            err "$c -> el ping al UPF no responde"
+        fi
+    done
+
+    echo ""
+    echo "  Interfaces de datos:"
+    for c in $TERMINALES; do
+        ue_if=$(docker exec "$c" ip -4 addr show tun_srsue 2>/dev/null \
+            | grep -oE 'inet [0-9./]+' | awk '{print $2}')
+        printf "    %-12s tun_srsue -> %s\n" "$c" "${ue_if:-no existe}"
+    done
+    upf_if=$(docker exec core-upf ip -4 addr show ogstun 2>/dev/null \
+        | grep -oE 'inet [0-9./]+' | awk '{print $2}')
+    printf "    %-12s ogstun    -> %s\n" "UPF" "${upf_if:-no existe}"
 fi
-
-echo ""
-echo "  \$ docker exec ue-srsue ping -c 4 10.45.0.1"
-echo "$ping_out" | sed 's/^/  /'
-
-# Interfaces implicadas, para ver el camino completo
-echo ""
-echo "  Interfaces de datos en los dos extremos:"
-ue_if=$(docker exec ue-srsue ip -4 addr show tun_srsue 2>/dev/null \
-    | grep -oE 'inet [0-9./]+' | awk '{print $2}')
-upf_if=$(docker exec core-upf ip -4 addr show ogstun 2>/dev/null \
-    | grep -oE 'inet [0-9./]+' | awk '{print $2}')
-echo "    UE  (tun_srsue) -> ${ue_if:-no existe}"
-echo "    UPF (ogstun)    -> ${upf_if:-no existe}"
 
 # ---------------------------------------------------------------------------
 # Comprueba que la cadena E2 entrega datos reales, no solo que los nodos
@@ -323,3 +336,4 @@ elif [ "$MODE" = "check+xapp" ]; then
 fi
 
 exit $([ "$FALLOS" -eq 0 ] && echo 0 || echo 1)
+

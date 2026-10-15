@@ -56,11 +56,17 @@ fi
 
 echo ""
 echo "=== 1. Parando el laboratorio (bloques 1-3) ==="
+
+# El broker del escenario multi-UE se crea con "docker run", fuera de Compose,
+# asi que hay que eliminarlo aparte. Los terminales ue2 y ue3 pertenecen al
+# fichero de superposicion: sin --remove-orphans quedarian vivos y ocuparian
+# sus direcciones IP, impidiendo el siguiente arranque.
+docker rm -f ue-broker >/dev/null 2>&1 && ok "Broker multi-UE eliminado"
 if [ "$MODE" = "purge" ]; then
-    docker compose down -v
+    docker compose down -v --remove-orphans
     ok "Contenedores y volumenes eliminados (MongoDB incluido)"
 else
-    docker compose down
+    docker compose down --remove-orphans
     ok "Contenedores eliminados (el volumen mongo_data se conserva)"
 fi
 

@@ -98,7 +98,43 @@ Los puertos de transmisión no cambian en ningún caso.
 
 ---
 
-## 4. Secuencia de arranque
+## 4. Arranque
+
+```bash
+./lab-multiue.sh            # los tres terminales
+./lab-multiue.sh 2          # dos
+./lab-multiue.sh 1          # uno
+```
+
+Si el laboratorio base no esta levantado, el script ejecuta `start-lab.sh` por
+su cuenta.
+
+### Ganancias escalonadas: el parametro critico
+
+**Las ganancias de los terminales NO pueden ser iguales.** Es el ajuste que
+decide si el escenario funciona o no, y el que mas costo encontrar.
+
+| Terminales | Ganancias | Atenuacion equivalente |
+|---|---|---|
+| 1 | `1.0` | 0 dB |
+| 2 | `1.0, 0.316` | 0 y 10 dB |
+| 3 | `1.0, 0.316, 0.1` | 0, 10 y 20 dB |
+
+El broker suma las señales de subida, de modo que cada terminal recibe como
+interferencia lo que aportan los demas. Con ganancias iguales, la señal util y
+la interferencia crecen a la par: la relacion señal-ruido se queda en 5-6 dB,
+el CRC falla y ningun terminal llega a registrarse. Subir todas las ganancias
+por igual no sirve de nada, precisamente porque la proporcion no cambia.
+
+Con niveles escalonados la DU puede distinguirlos, igual que en una celda real
+los terminales llegan con potencias distintas segun su distancia a la antena.
+La señal pasa entonces a 9-12 dB, muy por encima del umbral.
+
+Son los mismos valores que trae el flujo oficial de srsRAN (0, 10 y 20 dB).
+
+## 5. Secuencia de arranque (manual)
+
+Lo que hace el script, por si hay que ejecutarlo paso a paso para depurar.
 
 **El orden importa y no es negociable.** El broker va siempre el último: los
 terminales no pueden conectar hasta que exista el camino de bajada y subida.
@@ -155,7 +191,7 @@ que falta y no sale nada hacia la DU.
 
 ---
 
-## 5. Verificación
+## 6. Verificación
 
 ```bash
 ./caudal.sh
@@ -183,24 +219,21 @@ done
 
 ---
 
-## 6. Medidas de referencia
+## 7. Medidas de referencia
 
-Obtenidas en este laboratorio, útiles para comparar:
+Obtenidas en este laboratorio. Sirven para saber si un arranque ha ido bien.
 
-| Escenario | Caudal DU (10 s) | Latencia media |
-|---|---|---|
-| Enlace directo, 1 terminal, sin broker | 1,59 GB | 46 ms |
-| Con broker, 1 terminal | 0,55 GB | 112 ms |
-| Con broker, 2 terminales | 1,01 GB | 56 ms |
-| Con broker, 3 terminales | 1,02 GB | 61 ms |
+| Escenario | Caudal DU (10 s) | Latencia media | Señal |
+|---|---|---|---|
+| Enlace directo, 1 terminal, sin broker | 1,59 GB | 46 ms | — |
+| Con broker, 1 terminal | 0,85 GB | 71 ms | — |
+| Con broker, 2 terminales | 0,86 GB | 66 / 55 ms | ~11 dB |
+| Con broker, 3 terminales | 0,76-0,88 GB | 57 / 58 / 61 ms | 9,3 / 11,3 / 12,4 dB |
 
-El caso de un solo terminal con broker es el peor de los tres: el bloque que
-suma las subidas está pensado para varias entradas y con una sola no fluye con
-la misma soltura.
+La relación señal-ruido es el indicador más útil para diagnosticar: por debajo
+de 7 dB el CRC empieza a fallar y los terminales no se registran.
 
----
-
-## 7. Cómo medir correctamente
+## 8. Cómo medir correctamente
 
 **Localizar siempre la interfaz por su dirección IP, nunca por su nombre.**
 La DU está conectada a tres redes y Docker no garantiza el orden de las
@@ -222,7 +255,7 @@ docker exec ran-du sh -c '
 
 ---
 
-## 8. Problemas habituales
+## 9. Problemas habituales
 
 **Un terminal se queda en `Attaching UE...` y no obtiene dirección.**
 El emparejamiento ZMQ se ha perdido. Hay que reiniciar ambos extremos en
@@ -251,7 +284,7 @@ Si un terminal de una prueba anterior sigue vivo, el nuevo falla con
 
 ---
 
-## 9. Las direcciones de los terminales van subiendo
+## 10. Las direcciones de los terminales van subiendo
 
 Cada reinicio asigna la siguiente dirección libre del rango (10.45.0.2,
 luego .3, .4...). No son restos: el UPF lleva un contador que no vuelve atrás

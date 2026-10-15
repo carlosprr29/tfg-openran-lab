@@ -16,13 +16,14 @@ Para el procedimiento operativo, ver `MULTIUE-RECETA.md`.
 | 2 | Flujo oficial de srsRAN con interfaz gráfica | Igual |
 | 3 | Terminales como procesos nativos del anfitrión | Igual |
 | 4 | Reguladores de ritmo, siguiendo el modelo de EdgeRIC | Igual |
-| 5 | Vuelta al estado estable y **un solo cambio** | **Funciona** |
+| 5 | Vuelta al estado estable y **un solo cambio** | Funciona con 1 y 2 terminales |
+| 6 | Ganancias escalonadas por terminal | **Funciona con 3** |
 
 ---
 
-## Las tres causas reales
+## Las cuatro causas reales
 
-Ninguna era el broker.
+Ninguna era el broker en si.
 
 ### 1. Se medía la interfaz equivocada
 
@@ -91,6 +92,48 @@ se creó su red con `docker network create`. Después, el compose del RIC no
 levantaba bien al encontrarse una red que él no había creado.
 
 ---
+
+## La cuarta causa: ganancias iguales
+
+Descubierta en una segunda ronda, al reproducir el escenario de forma
+controlada tras un reinicio de la maquina virtual.
+
+Con la configuracion correcta, uno y dos terminales funcionaban, pero tres no.
+El registro de la DU mostraba `crc=KO` con relacion señal-ruido de 5-6 dB,
+frente a los 10-11 dB del escenario de dos.
+
+El motivo es que el broker suma las señales de subida: cada terminal recibe
+como interferencia lo que aportan los demas. Con dos terminales hay un solo
+interferente y la señal aguanta; con tres hay dos y cae por debajo del umbral
+de decodificacion.
+
+Se probo a subir las tres ganancias por igual (de 1.0 a 1.7) y **la relacion
+señal-ruido no vario ni un decimal**: 6,7 / 5,2 / 5,3 dB antes y despues. Eso
+descarto varias hipotesis y apunto a la correcta: amplificar todas las ramas
+por igual amplifica tambien la interferencia, de modo que la proporcion entre
+señal util e interferencia permanece intacta.
+
+La solucion es escalonar las ganancias: `1.0 / 0.316 / 0.1`, equivalentes a 0,
+10 y 20 dB de atenuacion. Con ellas la señal sube a 9,3 / 11,3 / 12,4 dB y los
+tres terminales se registran.
+
+Son exactamente los valores que trae el flujo oficial de srsRAN. Estaban a la
+vista desde el primer dia, interpretados como un detalle decorativo de la
+interfaz grafica.
+
+### Pruebas que acotaron el problema
+
+| Prueba | Resultado | Que descarto |
+|---|---|---|
+| UE1 solo | Funciona | Configuracion, recursos, orden |
+| UE1 + UE2 | Funciona | Lo mismo, y que fuera cuestion de dos |
+| UE1 + UE2 + UE3 | Falla, señal 5-6 dB | — |
+| UE1 + UE3, sin UE2 | **Funciona** | Que UE3 tuviera algo mal |
+| Tres, ganancias 1.7 iguales | Falla, señal identica | Que bastara con amplificar |
+| Tres, ganancias escalonadas | **Funciona**, señal 9-12 dB | — |
+
+La prueba de UE1 + UE3 fue la mas informativa: demostro que cualquier pareja
+funciona y que el problema era el numero, no un terminal concreto.
 
 ## Conclusiones de método
 
