@@ -199,6 +199,13 @@ else
 fi
 
 echo ""
+# Cuando lo invoca lab-multiue.sh (MULTIUE=1), el terminal unico no se
+# arranca: sus direcciones ZMQ apuntan al broker, que todavia no existe en
+# este punto, asi que daria un error enganoso. Los terminales los levanta
+# despues lab-multiue.sh.
+if [ "${MULTIUE:-0}" = "1" ]; then
+    echo "=== 6. UE simulado: omitido (lo arranca lab-multiue.sh) ==="
+else
 echo "=== 6. UE simulado (srsUE, radio ZMQ) ==="
 # IMPORTANTE: el UE hace connect contra el socket ZMQ de la DU (que hace bind),
 # asi que la celda tiene que estar activa ANTES de arrancarlo. Si no, ambos
@@ -283,6 +290,8 @@ else
     echo "    docker exec ue-srsue ip addr show tun_srsue"
     echo "    docker exec -it ue-srsue ping -c 4 10.45.0.1"
 fi
+
+fi   # fin del bloque omitido cuando MULTIUE=1
 
 echo ""
 echo "=== Verificacion del registro E2 en el RIC ==="

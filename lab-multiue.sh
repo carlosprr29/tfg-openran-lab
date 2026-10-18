@@ -88,7 +88,7 @@ if base_lista; then
 else
     avis "El laboratorio base no esta levantado; ejecutando ./start-lab.sh"
     echo ""
-    ./start-lab.sh
+    MULTIUE=1 ./start-lab.sh
     echo ""
     if base_lista; then
         ok "Laboratorio base levantado"
@@ -99,6 +99,13 @@ else
     # El start-lab.sh arranca el terminal unico, que hay que parar antes de
     # seguir: no puede haber ningun terminal en marcha al reiniciar la DU.
     $C stop ue-simulado >/dev/null 2>&1
+
+    # Margen para que la maquina se asiente. Sin el, el escenario arranca
+    # sobre una VM aun cargada por el despliegue de los 20 contenedores
+    # anteriores: el caudal cae a la mitad y el tercer terminal (el de mayor
+    # atenuacion, y por tanto el de menor margen) no llega a registrarse.
+    echo ">> Margen de 45 s para que el laboratorio base se estabilice"
+    sleep 45
 fi
 
 # --- 1. Partir de limpio -----------------------------------------------------
@@ -163,8 +170,8 @@ du_tx() {
 }
 a=$(du_tx); sleep 10; b=$(du_tx)
 d=$(( ${b:-0} - ${a:-0} ))
-if [ "$d" -gt 500000000 ]; then
-    ok "La DU transmite $((d/1048576)) MB (referencia: ~850 MB)"
+if [ "$d" -gt 300000000 ]; then
+    ok "La DU transmite $((d/1048576)) MB (referencia: 450-850 MB segun carga)"
 else
     avis "La DU transmite $((d/1048576)) MB, por debajo de lo habitual"
 fi
