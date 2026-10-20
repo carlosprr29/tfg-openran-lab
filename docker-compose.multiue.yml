@@ -55,19 +55,9 @@ services:
   # ---------------------------------------------------------------------------
   # Terminales. Cada uno con su IMSI, sus puertos y sus ficheros propios.
   # ---------------------------------------------------------------------------
-  ue1:
-    image: local/srsue:latest
-    container_name: ue-srsue1
-    cap_add: [NET_ADMIN]
-    devices: ["/dev/net/tun:/dev/net/tun"]
-    volumes:
-      - ./config/ue/ue1.conf:/config/ue.conf:ro
-      - ./logs/ue:/tmp
-    depends_on: [ocudu-du]
-    networks:
-      oran_5g_net:
-        ipv4_address: 10.0.0.30
-    command: srsue /config/ue.conf
+  # El terminal 1 es el servicio "ue-simulado" del compose base, que usa
+  # ue_zmq_lab.conf. Aqui no se define: hacerlo creaba un duplicado que nunca
+  # se arrancaba y dejaba ficheros vacios ue1_*.pcap que confundian.
 
   ue2:
     image: local/srsue:latest

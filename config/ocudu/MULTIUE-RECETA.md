@@ -101,6 +101,8 @@ Los puertos de transmisión no cambian en ningún caso.
 ## 4. Arranque
 
 ```bash
+# Dos pasos, en este orden:
+./start-lab.sh              # laboratorio base
 ./lab-multiue.sh            # los tres terminales
 ./lab-multiue.sh 2          # dos
 ./lab-multiue.sh 1          # uno
