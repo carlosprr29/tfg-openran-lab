@@ -4,7 +4,13 @@
 # -----------------------------------------------------------------------------
 # Genera trafico controlado con los tres terminales y guarda, en una carpeta
 # con fecha: las capturas PCAP de cada terminal y de la DU, el trafico medido
-# por iperf3 y una ficha con los parametros usados.
+# por iperf3, las metricas recogidas por el interfaz E2 y una ficha con los
+# parametros usados.
+#
+# Las metricas se recogen solo si el RIC esta levantado y sus nodos E2 estan
+# conectados. Si no lo estan, el script intenta reconectarlos reiniciando el
+# terminador E2 y la DU; si aun asi no se consigue, toma la captura sin
+# metricas en lugar de abortar.
 #
 # Uso:
 #   ./captura.sh holgado       trafico muy por debajo de la capacidad (referencia)
@@ -31,6 +37,8 @@ err()  { echo -e "${ROJO}[FALLO]${NC} $1"; }
 
 PERFIL="${1:-base}"
 DUR="${2:-180}"
+METRICAS="DRB.UEThpDl,DRB.UEThpUl,DRB.RlcSduDelayDl,DRB.RlcSduTransmittedVolumeDL,DRB.RlcSduTransmittedVolumeUL"
+E2_NODO=""
 C="docker compose -f docker-compose.yaml -f docker-compose.multiue.yml"
 UES="ue-srsue ue-srsue2 ue-srsue3"
 
@@ -48,6 +56,7 @@ case "$PERFIL" in
 esac
 
 SESION="data/capturas/$(date +%Y%m%d-%H%M)-${PERFIL}"
+SESION_ABS="$(pwd)/$SESION"
 
 echo ""
 echo "=========================================================="
@@ -84,6 +93,51 @@ sudo rm -f logs/ue/*.pcap logs/ran/du/*.pcap logs/ran/cu_cp/*.pcap 2>/dev/null
 sudo rm -f logs/ue/iperf_*.log 2>/dev/null
 ok "Capturas y registros anteriores eliminados (con los terminales parados)"
 
+# --- Comprobar el interfaz E2 -----------------------------------------------
+# La xApp no puede suscribirse a un nodo que no este CONNECTED. El reinicio de
+# la DU, que forma parte del arranque del escenario, rompe con frecuencia esa
+# asociacion: el terminador E2 pierde su registro en la mensajeria interna del
+# RIC y rechaza el alta con "cause=unknown". La receta conocida es reiniciar
+# e2term DESPUES de que e2mgr este operativo.
+e2_conectados() {
+    docker exec ric_e2mgr curl -s http://localhost:3800/v1/nodeb/states 2>/dev/null \
+        | grep -o '"connectionStatus":"CONNECTED"' | wc -l
+}
+
+e2_nodo_du() {
+    docker exec ric_e2mgr curl -s http://localhost:3800/v1/nodeb/states 2>/dev/null \
+        | grep -oE '"inventoryName":"gnbd_[^"]*"' | head -1 \
+        | sed 's/.*:"//;s/"//'
+}
+
+preparar_e2() {
+    docker ps --format '{{.Names}}' | grep -q '^ric_e2mgr$' || {
+        avis "El RIC no esta levantado: no se recogeran metricas"
+        return 1
+    }
+
+    if [ "$(e2_conectados)" -ge 2 ]; then
+        ok "Nodos E2 conectados"
+    else
+        avis "Nodos E2 desconectados; reiniciando e2term"
+        (cd oran-sc-ric && docker compose restart e2term >/dev/null 2>&1)
+        sleep 30
+        $C restart ocudu-du >/dev/null 2>&1
+        sleep 80
+        if [ "$(e2_conectados)" -ge 2 ]; then
+            ok "Nodos E2 reconectados"
+        else
+            avis "Los nodos E2 siguen desconectados: se tomara la captura sin metricas"
+            return 1
+        fi
+    fi
+
+    E2_NODO=$(e2_nodo_du)
+    [ -n "$E2_NODO" ] || { avis "No se identifico el nodo de la DU"; return 1; }
+    ok "Nodo E2 de la DU: $E2_NODO"
+    return 0
+}
+
 # --- Levantar el escenario de cero ------------------------------------------
 echo ""
 echo ">> Levantando los tres terminales y el broker"
@@ -111,9 +165,37 @@ n_srv=$(docker exec core-upf sh -c 'ss -tln 2>/dev/null | grep -c "10.45.0.1:520
 # --- Reiniciar los terminales para que la captura empiece limpia ------------
 # Reiniciar los terminales obliga a reiniciar tambien la DU (emparejamiento
 # ZMQ), asi que en su lugar se deja correr y se descuenta el arranque.
+# --- Recoleccion de metricas por E2 -----------------------------------------
+METRICAS_OK=0
+echo ""
+if preparar_e2; then
+    cp xapp_ai/kpm_csv_xapp.py oran-sc-ric/xApps/python/ 2>/dev/null
+    chmod +x oran-sc-ric/xApps/python/kpm_csv_xapp.py 2>/dev/null
+    # Un CSV de una sesion anterior falsearia el resultado si la xApp fallara
+    (cd oran-sc-ric && docker compose exec -T python_xapp_runner \
+        rm -f /tmp/metricas_sesion.csv >/dev/null 2>&1)
+    METRICAS_OK=1
+fi
+
 echo ""
 echo ">> Generando trafico durante ${DUR} s..."
 echo "   (no interrumpas el proceso: las capturas se escriben al final)"
+
+# La xApp se lanza en segundo plano, con la misma duracion que el trafico, de
+# modo que la serie de metricas cubra exactamente la misma ventana temporal
+# que las capturas.
+if [ "$METRICAS_OK" = "1" ]; then
+    (cd oran-sc-ric && docker compose exec -T python_xapp_runner \
+        ./kpm_csv_xapp.py \
+        --e2_node_id="$E2_NODO" \
+        --metrics="$METRICAS" \
+        --kpm_report_style=5 \
+        --output=/tmp/metricas_sesion.csv \
+        --duration=$((DUR + 10)) > "$SESION_ABS/xapp.log" 2>&1) &
+    XAPP_PID=$!
+    sleep 5
+    ok "Recoleccion de metricas en marcha"
+fi
 
 i=0
 for c in $UES; do
@@ -138,6 +220,20 @@ for c in $UES; do
     docker exec "$c" cat "/tmp/iperf_${c}.log" > "$SESION/iperf_${c}.txt" 2>/dev/null
 done
 ok "Resultados de iperf3 guardados"
+
+# --- Recoger las metricas ---------------------------------------------------
+if [ "$METRICAS_OK" = "1" ]; then
+    echo ">> Esperando a que la xApp termine de recoger"
+    wait "$XAPP_PID" 2>/dev/null
+    (cd oran-sc-ric && docker compose exec -T python_xapp_runner \
+        cat /tmp/metricas_sesion.csv 2>/dev/null) > "$SESION_ABS/metricas.csv"
+    n=$(($(wc -l < "$SESION/metricas.csv") - 1))
+    if [ "$n" -gt 0 ]; then
+        ok "Metricas recogidas: $n filas"
+    else
+        avis "El fichero de metricas quedo vacio; ver $SESION/xapp.log"
+    fi
+fi
 
 # --- Parar los terminales: aqui se escriben los PCAP ------------------------
 echo ""
@@ -225,6 +321,44 @@ done
     echo "terminal en el broker (1.0 / 0.316 / 0.1): el tercero, con 20 dB"
     echo "de atenuacion, obtiene sistematicamente menos."
 } >> "$SESION/README.md"
+
+# --- Resumen de las metricas ------------------------------------------------
+if [ -s "$SESION/metricas.csv" ]; then
+    echo ""
+    echo "  Metricas por terminal (media de la sesion):"
+    awk -F, 'NR>1 && $4!="" {
+        n[$4]++
+        for (i=5; i<=NF; i++) if ($i != "") { s[$4,i]+=$i; c[$4,i]++ }
+    }
+    END {
+        for (u in n) {
+            printf "    UE id=%-3s  muestras=%-5d", u, n[u]
+            for (i=5; i<=7; i++) {
+                if (c[u,i]>0) printf "  %.1f", s[u,i]/c[u,i]; else printf "  -"
+            }
+            printf "\n"
+        }
+    }' "$SESION/metricas.csv" | sort
+
+    {
+        echo ""
+        echo "## Metricas recogidas por E2"
+        echo ""
+        echo "Fichero: \`metricas.csv\` — una fila por terminal y periodo de informe."
+        echo ""
+        echo "Columnas: timestamp, t_rel, e2_node, ue_id, y una por metrica:"
+        echo ""
+        echo '```'
+        echo "$METRICAS" | tr ',' '\n' | sed 's/^/  /'
+        echo '```'
+        echo ""
+        echo "Filas: $(($(wc -l < "$SESION/metricas.csv") - 1))"
+        echo ""
+        echo "Los identificadores de terminal del controlador (0, 1, 2) no coinciden"
+        echo "con los de la captura (C-RNTI 17921 y siguientes): el RIC emplea su"
+        echo "propia numeracion interna."
+    } >> "$SESION/README.md"
+fi
 
 echo ""
 echo "=========================================================="
