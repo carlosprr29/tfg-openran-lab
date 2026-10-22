@@ -1,0 +1,6 @@
+# Anade herramientas de generacion de trafico al terminal.
+# Capa fina sobre la imagen compilada: no recompila srsUE.
+FROM local/srsue:base
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        iperf3 iproute2 procps \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
