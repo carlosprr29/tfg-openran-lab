@@ -37,7 +37,7 @@ err()  { echo -e "${ROJO}[FALLO]${NC} $1"; }
 
 PERFIL="${1:-base}"
 DUR="${2:-180}"
-METRICAS="DRB.UEThpDl,DRB.UEThpUl,DRB.RlcSduDelayDl,DRB.RlcSduTransmittedVolumeDL,DRB.RlcSduTransmittedVolumeUL"
+METRICAS="DRB.UEThpDl,DRB.UEThpUl,DRB.RlcSduDelayDl,DRB.RlcDelayUl,DRB.RlcSduTransmittedVolumeDL,DRB.RlcSduTransmittedVolumeUL"
 E2_NODO=""
 C="docker compose -f docker-compose.yaml -f docker-compose.multiue.yml"
 UES="ue-srsue ue-srsue2 ue-srsue3"
