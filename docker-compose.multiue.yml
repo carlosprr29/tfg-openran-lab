@@ -2,7 +2,7 @@
 # Escenario MULTI-UE (experimental)
 # -----------------------------------------------------------------------------
 # Fichero de superposicion. NO se usa solo: se combina con el compose base.
-# El script start-multiue.sh lo hace automaticamente.
+# El script lab-multiue.sh lo hace automaticamente.
 #
 #   docker compose -f docker-compose.yaml -f docker-compose.multiue.yml ...
 #
@@ -40,7 +40,7 @@ services:
       - DU_ADDR=10.0.0.24
       - DU_TX_PORT=2000
       - DU_RX_PORT=2001
-      # El numero de terminales se ajusta al arrancar (ver start-multiue.sh).
+      # El numero de terminales se ajusta al arrancar (ver lab-multiue.sh).
       # Por defecto, los tres.
       - UE_ADDRS=10.0.0.30,10.0.0.31,10.0.0.32
       - UE_TX_PORTS=2101,2201,2301

@@ -10,8 +10,13 @@
 # data/escenarios/01-ue-comprometido-<fecha>/
 #
 # Uso:
-#   ./escenarios/01-ue-comprometido/ataque.sh           180 s (por defecto)
-#   ./escenarios/01-ue-comprometido/ataque.sh 120       120 s
+#   ./escenarios/01-ue-comprometido/ataque.sh                 180 s, rafaga 5M
+#   ./escenarios/01-ue-comprometido/ataque.sh 180 1M          intensidad 1 Mbps
+#   ./escenarios/01-ue-comprometido/ataque.sh 180 200K        intensidad baja
+#
+# La intensidad (segundo parametro) es el caudal de la rafaga del atacante.
+# Probar de fuerte (5M, evidente) a suave (200K, cercano a lo normal) para
+# trazar la curva de detectabilidad.
 #
 # El ataque no dura toda la sesion: los primeros y ultimos segundos son
 # trafico normal, y el ataque ocurre en el tramo central. Asi la propia
@@ -27,14 +32,13 @@ avis() { echo -e "${AMAR}[AVISO]${NC} $1"; }
 err()  { echo -e "${ROJO}[FALLO]${NC} $1"; }
 
 DUR="${1:-180}"
+CAUDAL_ATAQUE="${2:-5M}"   # intensidad del ataque (caudal de la rafaga de UE3)
 C="docker compose -f docker-compose.yaml -f docker-compose.multiue.yml"
 UES="ue-srsue ue-srsue2 ue-srsue3"
 METRICAS="DRB.UEThpDl,DRB.UEThpUl,DRB.RlcSduDelayDl,DRB.RlcDelayUl,DRB.RlcSduTransmittedVolumeDL,DRB.RlcSduTransmittedVolumeUL"
 
 # Caudal normal (holgado) de cada terminal
 CAUDAL_NORMAL=("100K" "100K" "50K")
-# Caudal del terminal comprometido durante el ataque
-CAUDAL_ATAQUE="5M"
 # El atacante es UE3 (indice 2)
 IDX_ATACANTE=2
 
@@ -43,7 +47,9 @@ INICIO_ATAQUE=$((DUR / 3))
 FIN_ATAQUE=$((2 * DUR / 3))
 DUR_ATAQUE=$((FIN_ATAQUE - INICIO_ATAQUE))
 
-SESION="data/escenarios/01-ue-comprometido-$(date +%Y%m%d-%H%M)"
+# El nombre de la sesion incluye la intensidad para distinguir las tomas
+INT_ETIQUETA=$(echo "$CAUDAL_ATAQUE" | tr -d ' ')
+SESION="data/escenarios/01-ue-comprometido-${INT_ETIQUETA}-$(date +%Y%m%d-%H%M)"
 SESION_ABS="$(pwd)/$SESION"
 E2_NODO=""
 
@@ -51,7 +57,7 @@ echo ""
 echo "=========================================================="
 echo "  Escenario 01 - Terminal comprometido"
 echo "  Duracion: ${DUR}s  |  Ataque: ${INICIO_ATAQUE}s -> ${FIN_ATAQUE}s"
-echo "  Atacante: UE3 pasa de 50K a ${CAUDAL_ATAQUE}"
+echo "  Atacante: UE3 pasa de 50K a ${CAUDAL_ATAQUE} (intensidad)"
 echo "  Destino: $SESION"
 echo "=========================================================="
 
@@ -93,11 +99,12 @@ e2_conectados() {
 }
 METRICAS_OK=0
 if docker ps --format '{{.Names}}' | grep -q '^ric_e2mgr$'; then
-    if [ "$(e2_conectados)" -lt 2 ]; then
-        avis "Nodos E2 desconectados; reiniciando e2term"
+    for intento in 1 2 3; do
+        [ "$(e2_conectados)" -ge 2 ] && break
+        avis "Nodos E2 desconectados (intento $intento/3); reiniciando e2term y DU"
         (cd oran-sc-ric && docker compose restart e2term >/dev/null 2>&1); sleep 30
         $C restart ocudu-du >/dev/null 2>&1; sleep 80
-    fi
+    done
     if [ "$(e2_conectados)" -ge 2 ]; then
         E2_NODO=$(docker exec ric_e2mgr curl -s http://localhost:3800/v1/nodeb/states 2>/dev/null \
             | grep -oE '"inventoryName":"gnbd_[^"]*"' | head -1 | sed 's/.*:"//;s/"//')
@@ -112,6 +119,9 @@ fi
 
 # --- Lanzar la recoleccion de metricas --------------------------------------
 if [ "$METRICAS_OK" = "1" ]; then
+    (cd oran-sc-ric && docker compose exec -T python_xapp_runner \
+        pkill -f kpm_csv_xapp >/dev/null 2>&1) || true
+    sleep 2
     (cd oran-sc-ric && docker compose exec -T python_xapp_runner ./kpm_csv_xapp.py \
         --e2_node_id="$E2_NODO" --metrics="$METRICAS" --kpm_report_style=5 \
         --output=/tmp/metricas_sesion.csv --duration=$((DUR + 10)) \
