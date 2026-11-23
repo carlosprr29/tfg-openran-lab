@@ -22,6 +22,23 @@ del proyecto EdgeRIC (github.com/ushasigh/srsran-edgeric-5g), que ejecuta
 srsRAN usa un unico throttle antes del reparto; EdgeRIC pone uno en cada
 rama, que es lo que se replica aqui.
 
+ATAQUE DE JAMMING EN LA BAJADA (escenario 04)
+---------------------------------------------
+En cada rama de bajada, despues de la ganancia del terminal, se suma ruido
+gaussiano complejo antes del throttle. Es el equivalente a un jammer que sube
+el suelo de ruido del canal: la SINR en el receptor del terminal baja y
+empiezan los fallos de decodificacion.
+
+El nivel de ruido se controla en caliente, sin reiniciar el broker, leyendo un
+fichero (JAM_CTRL, por defecto /tmp/jam_nivel) en un hilo aparte. Un 0 deja el
+laboratorio exactamente como sin ataque (la fuente de ruido a amplitud 0 emite
+ceros). El ataque.sh del escenario escribe el nivel en la fase de ataque y
+vuelve a poner 0 al terminar.
+
+Como el ruido se suma DESPUES de la ganancia, el terminal mas atenuado recibe
+el mismo ruido sobre una senal mas debil: es el primero en degradarse, igual
+que un jammer real muerde antes al terminal con menos margen.
+
 Configuracion por variables de entorno:
   DU_ADDR        IP de la DU                      (10.0.0.24)
   DU_TX_PORT     puerto donde la DU transmite     (2000)
@@ -32,12 +49,16 @@ Configuracion por variables de entorno:
   UE_GAINS       ganancia por UE (1.0 = sin atenuacion)
   SAMP_RATE      frecuencia de muestreo en Hz     (11.52e6)
   SLOW_DOWN      factor de ralentizacion          (1 = tiempo real)
+  JAM_CTRL       fichero con el nivel de ruido    (/tmp/jam_nivel)
+  JAM_SEED       semilla base del ruido           (0)
 """
 
 import os
 import sys
+import time
 import signal
-from gnuradio import gr, blocks, zeromq
+import threading
+from gnuradio import gr, blocks, zeromq, analog
 
 
 def lista(nombre, por_defecto, conv=str):
@@ -62,6 +83,8 @@ class BrokerMultiUE(gr.top_block):
         slow_down = float(os.environ.get("SLOW_DOWN", "1"))
         ritmo = samp_rate / slow_down
 
+        jam_seed = int(os.environ.get("JAM_SEED", "0"))
+
         n = len(ue_addrs)
         if not (len(ue_tx) == len(ue_rx) == len(ue_gains) == n):
             print("ERROR: UE_ADDRS, UE_TX_PORTS, UE_RX_PORTS y UE_GAINS "
@@ -77,24 +100,33 @@ class BrokerMultiUE(gr.top_block):
             print(f"  UE{i+1}: recibe UL de tcp://{ue_addrs[i]}:{ue_tx[i]}")
             print(f"        sirve  DL en tcp://*:{ue_rx[i]}  "
                   f"(ganancia {ue_gains[i]})")
+        print(f"  Jamming DL: ruido controlado por fichero, amplitud inicial 0")
 
         tam = gr.sizeof_gr_complex
 
         # --- BAJADA: una fuente desde la DU, una copia por terminal ---
         # Cada rama lleva su propio throttle, como en el broker de EdgeRIC.
+        # Entre la ganancia y el throttle se suma ruido gaussiano (jammer).
         dl_origen = zeromq.req_source(tam, 1, f"tcp://{du_addr}:{du_tx}", 100, False, -1)
 
         self.dl_gan = []
         self.dl_thr = []
+        self.jam_fuentes = []   # fuentes de ruido, una por rama de bajada
         for i in range(n):
             gan = blocks.multiply_const_cc(ue_gains[i])
+            mezcla = blocks.add_vcc(1)
+            ruido = analog.noise_source_c(analog.GR_GAUSSIAN, 0.0, jam_seed + i)
             thr = blocks.throttle(tam, ritmo, True)
             destino = zeromq.rep_sink(tam, 1, f"tcp://*:{ue_rx[i]}", 100, False, -1)
-            self.connect(dl_origen, gan, thr, destino)
+            self.connect(dl_origen, gan, (mezcla, 0))
+            self.connect(ruido, (mezcla, 1))
+            self.connect(mezcla, thr, destino)
             self.dl_gan.append(gan)
             self.dl_thr.append(thr)
+            self.jam_fuentes.append(ruido)
 
         # --- SUBIDA: una fuente por terminal, sumadas hacia la DU ---
+        # Sin cambios: por ahora el ataque solo toca la bajada.
         sumador = blocks.add_vcc(1)
         ul_thr = blocks.throttle(tam, ritmo, True)
         ul_destino = zeromq.rep_sink(tam, 1, f"tcp://*:{du_rx}", 100, False, -1)
@@ -110,8 +142,34 @@ class BrokerMultiUE(gr.top_block):
         self.ul_thr = ul_thr
 
 
+def vigilar_jam(fuentes, ctrl_path, intervalo=0.2):
+    """Lee el nivel de ruido del fichero de control y lo aplica en caliente.
+
+    Un valor ausente, ilegible o no numerico se trata como 0 (sin ataque).
+    Solo actua cuando el nivel cambia, para no tocar los bloques en cada vuelta.
+    """
+    ultimo = None
+    while True:
+        try:
+            with open(ctrl_path) as f:
+                amp = float(f.read().strip())
+        except (FileNotFoundError, ValueError, OSError):
+            amp = 0.0
+        if amp != ultimo:
+            for s in fuentes:
+                s.set_amplitude(amp)
+            print(f"[jam] nivel de ruido en la bajada -> {amp}", flush=True)
+            ultimo = amp
+        time.sleep(intervalo)
+
+
 def main():
     tb = BrokerMultiUE()
+    ctrl = os.environ.get("JAM_CTRL", "/tmp/jam_nivel")
+
+    hilo = threading.Thread(target=vigilar_jam,
+                            args=(tb.jam_fuentes, ctrl), daemon=True)
+    hilo.start()
 
     def parar(sig, frame):
         print("\nDeteniendo el broker...")
@@ -122,7 +180,8 @@ def main():
     signal.signal(signal.SIGINT, parar)
     signal.signal(signal.SIGTERM, parar)
 
-    print("Broker en marcha. Los terminales ya pueden conectarse.")
+    print(f"Broker en marcha. Control de jamming en {ctrl}. "
+          "Los terminales ya pueden conectarse.")
     tb.start()
     tb.wait()
 
